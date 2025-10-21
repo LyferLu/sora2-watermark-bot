@@ -26,7 +26,7 @@ WATERMARK_PATH = 'sorawatermark.mp4'
 
 # --- Helper Functions ---
 async def add_watermark_to_video(video_path: str, output_path: str, watermark_path: str,
-                                 opacity=0.7, scale=0.14):
+                                 opacity=1, scale=0.12):
     """
     在主视频上添加一个移动的 MP4 视频水印。
 
