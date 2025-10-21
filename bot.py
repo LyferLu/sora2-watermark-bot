@@ -4,8 +4,8 @@ import os
 import asyncio
 from telegram import Update, Bot
 from telegram.ext import Application, CommandHandler, MessageHandler, filters
-from moviepy.editor import VideoFileClip, ImageClip, CompositeVideoClip
-from PIL import Image
+from moviepy.editor import VideoFileClip, CompositeVideoClip
+import moviepy.video.fx.all as vfx
 
 # Enable logging
 logging.basicConfig(
@@ -22,40 +22,98 @@ if not TELEGRAM_BOT_TOKEN:
     exit(1)
 
 # Watermark image path (assuming it's in the same directory)
-WATERMARK_PATH = 'sora_logo.png'
+WATERMARK_PATH = 'sorawatermark.mp4'
 
 # --- Helper Functions ---
-async def add_watermark_to_video(video_path: str, output_path: str, watermark_path: str):
+async def add_watermark_to_video(video_path: str, output_path: str, watermark_path: str,
+                                 opacity=0.7, scale=0.14):
+    """
+    在主视频上添加一个移动的 MP4 视频水印。
+
+    :param video_path: 主视频文件路径。
+    :param watermark_path: 作为水印的 MP4 视频文件路径。
+    :param output_path: 输出视频文件路径。
+    :param opacity: 水印的不透明度 (0.0 到 1.0)。
+    :param scale: 水印相对于主视频尺寸的缩放比例。
+    """
     try:
-        video = VideoFileClip(video_path)
+        # 1. 加载主视频和水印视频
+        clip = VideoFileClip(video_path)
+        watermark = VideoFileClip(watermark_path)
+        duration = clip.duration
 
-        # Resize watermark image to fit video (e.g., 10% of video width)
-        watermark_original = Image.open(watermark_path)
-        video_width, video_height = video.size
+        # 2. 获取水印的 *原始* 时长，这将作为我们的“变换周期”
+        watermark_duration = watermark.duration
+        # 安全检查，防止水印时长为0导致除零错误
+        if watermark_duration == 0:
+            watermark_duration = duration # 如果水印没时长，就用主视频时长
+
+        # 3. 处理水印视频
+        #    - 移除音频以防冲突
+        #    - 循环播放，使其总时长与主视频匹配
+        watermark = watermark.without_audio().fx(vfx.loop, duration=duration)
+
+        #    - 将视频的“亮度”转换为“不透明度”
+        mask = watermark.to_mask()
+        watermark = watermark.set_mask(mask)
+        #    - 调整尺寸
+        watermark = watermark.resize(width=max(clip.w * scale, clip.h * scale, (clip.w + clip.h) * scale*0.75))
+        #    - 设置不透明度
+        watermark = watermark.set_opacity(opacity)
+
+        # 4. 定义水印出现的位置
+        positions = [
+            ("left", "top"), 
+            ("right", "center"), 
+            ("left", "bottom")
+        ]
+        positions_count = len(positions)
+
+        # 5. 定义一个函数，根据时间 t 返回水印的位置
+        def position_at_time(t):
+            # 计算当前时间 t 处于第几个 "水印周期"
+            #    (t // watermark_duration) 会得到 0, 1, 2, 3...
+            current_cycle = int(t // watermark_duration)
+            
+            # 使用 "模" 运算 (%) 来获取在 positions 中的循环索引
+            #    0 % 3 = 0
+            #    1 % 3 = 1
+            #    2 % 3 = 2
+            #    3 % 3 = 0  <-- 开始循环
+            #    4 % 3 = 1
+            idx = current_cycle % positions_count
+            
+            x_pos, y_pos = positions[idx]
+            # margin = 20  # 离边缘的距离
+            margin = min(clip.w, clip.h) * (scale / 4)
+
+            # 计算 x 坐标
+            if x_pos == "left":
+                px = margin
+            elif x_pos == "center":
+                px = (clip.w - watermark.w) / 2
+            else:  # right
+                px = clip.w - watermark.w - margin
+
+            # 计算 y 坐标
+            if y_pos == "top":
+                py = margin
+            elif y_pos == "center":
+                py = (clip.h - watermark.h) / 2
+            else:  # bottom
+                py = clip.h - watermark.h - margin
+
+            return (px, py)
+
+        # 6. 应用动态位置
+        watermark = watermark.set_position(lambda t: position_at_time(t))
+
+        # 7. 合成主视频和水印
+        final = CompositeVideoClip([clip, watermark])
         
-        # Calculate watermark size (e.g., 15% of video width)
-        watermark_width = int(video_width * 0.15)
-        watermark_height = int(watermark_original.height * (watermark_width / watermark_original.width))
+        # 8. 写入最终文件
+        final.write_videofile(output_path, codec="libx264", audio_codec="aac", preset="medium")
 
-        # Ensure watermark has an alpha channel for transparency
-        if watermark_original.mode != 'RGBA':
-            watermark_original = watermark_original.convert('RGBA')
-        
-        watermark_resized = watermark_original.resize((watermark_width, watermark_height), Image.Resampling.LANCZOS)
-        watermark_resized.save('temp_watermark.png') # Save resized watermark temporarily
-
-        watermark = ImageClip('temp_watermark.png', duration=video.duration)
-        
-        # Position watermark (e.g., bottom-right corner with some padding)
-        padding = int(video_width * 0.02) # 2% padding
-        x_position = video_width - watermark.w - padding
-        y_position = video_height - watermark.h - padding
-
-        final_video = CompositeVideoClip([video, watermark.set_pos((x_position, y_position))])
-        final_video.write_videofile(output_path, codec="libx264", audio_codec="aac")
-
-        # Clean up temporary watermark file
-        os.remove('temp_watermark.png')
         
         return True
     except Exception as e:
