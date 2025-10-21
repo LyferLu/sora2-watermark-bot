@@ -150,7 +150,10 @@ async def handle_video(update: Update, context) -> None:
 
         if await add_watermark_to_video(input_video_path, output_video_path, WATERMARK_PATH):
             logger.info(f"Watermark added. Sending {output_video_path}")
-            await update.message.reply_video(video=open(output_video_path, 'rb'))
+            await update.message.reply_video(video=open(output_video_path, 'rb'),
+                                             width=VideoFileClip(output_video_path).w,
+                                             height=VideoFileClip(output_video_path).h,
+                                             supports_streaming=True)
             await update.message.reply_text("Ваше видео с водяным знаком готово!")
         else:
             await update.message.reply_text("Произошла ошибка при добавлении водяного знака.")
