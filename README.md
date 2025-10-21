@@ -36,7 +36,7 @@ source ai/bin/activate
 Clone this repository to your local machine:
 
 ```bash
-git clone https://github.com/Error404rt/sora2-watermark-bot.git
+git clone https://github.com/LyferLu/sora2-watermark-bot.git
 cd sora2-watermark-bot
 ```
 
